@@ -547,13 +547,13 @@ pub fn overload(input: TokenStream) -> TokenStream {
                 crate::script::unroll::RuleOverload {
                     definition: crate::script::unroll::RuleDefinition(Box::new(
                         |lhs, rhs, context, properties, invert| {
-                            (#func)(
+                            Box::new((#func)(
                                 &crate::script::unroll::Convert::convert(lhs.clone()).unwrap(),
                                 &crate::script::unroll::Convert::convert(rhs.clone()).unwrap(),
                                 context,
                                 properties,
                                 invert
-                            )
+                            ))
                         }
                     )),
                     params: (
