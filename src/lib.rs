@@ -567,3 +567,29 @@ pub fn overload(input: TokenStream) -> TokenStream {
         }
     }
 }
+
+#[proc_macro_derive(CloneWithNode)]
+pub fn derive_clone_with_node(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+
+    let name = &input.ident;
+    let generics = &input.generics;
+    let where_clause = &generics.where_clause;
+
+    match &input.data {
+        Data::Enum(enum_data) => {
+            let expanded = quote! {
+                impl #generics CloneWithNode for #name #generics #where_clause {
+                    fn order(&self, context: &CompileContext) -> usize {
+                        #(#order_field_code)*
+                    }
+
+                    fn contains_entity(&self, entity: usize, context: &CompileContext) -> bool {
+                        #(#contains_field_code)*
+                    }
+                }
+            }
+        }
+        _ => panic!("unsupported"),
+    }
+}
