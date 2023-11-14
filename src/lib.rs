@@ -578,17 +578,59 @@ pub fn derive_clone_with_node(input: TokenStream) -> TokenStream {
 
     match &input.data {
         Data::Enum(enum_data) => {
+            let variant1 = enum_data.variants
+                .iter()
+                .map(|v| {
+                    let v_name = &v.ident;
+                    let arg_name = v.fields
+                        .iter()
+                        .enumerate()
+                        .map(|(i, _)| {
+                            format_ident!("v{i}")
+                        });
+
+                        let arg_name2 = arg_name.clone();
+
+                    quote! {
+                        Self::#v_name(#(#arg_name),*) => Self::#v_name(#(#arg_name2.clone_with_node()),*)
+                    }
+                });
+                
+            let variant2 = enum_data.variants
+                .iter()
+                .map(|v| {
+                    let v_name = &v.ident;
+                    let arg_name = v.fields
+                        .iter()
+                        .enumerate()
+                        .map(|(i, _)| {
+                            format_ident!("v{i}")
+                        });
+
+                        let arg_name2 = arg_name.clone();
+
+                    quote! {
+                        Self::#v_name(#(#arg_name),*) => Self::#v_name(#(#arg_name2.clone_without_node()),*)
+                    }
+                });
+
             let expanded = quote! {
                 impl #generics CloneWithNode for #name #generics #where_clause {
-                    fn order(&self, context: &CompileContext) -> usize {
-                        #(#order_field_code)*
+                    fn clone_with_node(&mut self) -> Self {
+                        match self {
+                            #(#variant1),*
+                        }
                     }
 
-                    fn contains_entity(&self, entity: usize, context: &CompileContext) -> bool {
-                        #(#contains_field_code)*
+                    fn clone_without_node(&self) -> Self {
+                        match self {
+                            #(#variant2),*
+                        }
                     }
                 }
-            }
+            };
+
+            expanded.into()
         }
         _ => panic!("unsupported"),
     }
