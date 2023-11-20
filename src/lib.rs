@@ -509,12 +509,12 @@ pub fn overload(input: TokenStream) -> TokenStream {
 
             let converted_it = params.iter().map(|_| {
                 quote! {
-                    &crate::script::unroll::Convert::convert(args.next().unwrap()).unwrap(),
+                    crate::script::unroll::Convert::convert(args.next().unwrap()).unwrap(),
                 }
             });
 
             let converted_group = param_group.as_ref().map(|_| quote! {
-                &args.map(|x| crate::script::unroll::Convert::convert(x).unwrap()).collect::<Vec<_>>(),
+                args.map(|x| crate::script::unroll::Convert::convert(x).unwrap()).collect::<Vec<_>>(),
             }).into_iter();
 
             let param_group_it = param_group
@@ -526,7 +526,7 @@ pub fn overload(input: TokenStream) -> TokenStream {
                     returned_type: #return_type,
                     definition: crate::script::unroll::FunctionDefinition(Box::new(
                         |args, context, display| {
-                            let mut args = args.into_iter().cloned();
+                            let mut args = args.into_iter();
                             crate::script::unroll::AnyExpr::from((#func)(
                                 #(#converted_it)*
                                 #(#converted_group)*
@@ -547,13 +547,13 @@ pub fn overload(input: TokenStream) -> TokenStream {
                 crate::script::unroll::RuleOverload {
                     definition: crate::script::unroll::RuleDefinition(Box::new(
                         |lhs, rhs, context, properties, invert| {
-                            Box::new((#func)(
-                                &crate::script::unroll::Convert::convert(lhs.clone()).unwrap(),
-                                &crate::script::unroll::Convert::convert(rhs.clone()).unwrap(),
+                            (#func)(
+                                crate::script::unroll::Convert::convert(lhs).unwrap(),
+                                crate::script::unroll::Convert::convert(rhs).unwrap(),
                                 context,
                                 properties,
                                 invert
-                            ))
+                            )
                         }
                     )),
                     params: (
@@ -589,10 +589,22 @@ pub fn derive_clone_with_node(input: TokenStream) -> TokenStream {
                             format_ident!("v{i}")
                         });
 
-                        let arg_name2 = arg_name.clone();
+                    let arg_name2 = arg_name.clone();
+
+                    let maybe_args = if v.fields.is_empty() {
+                        quote! {}
+                    } else {
+                        quote! {(#(#arg_name),*)}
+                    };
+
+                    let maybe_args2 = if v.fields.is_empty() {
+                        quote! {}
+                    } else {
+                        quote! {(#(#arg_name2.clone_with_node()),*)}
+                    };
 
                     quote! {
-                        Self::#v_name(#(#arg_name),*) => Self::#v_name(#(#arg_name2.clone_with_node()),*)
+                        Self::#v_name #maybe_args => Self::#v_name #maybe_args2
                     }
                 });
                 
@@ -607,10 +619,22 @@ pub fn derive_clone_with_node(input: TokenStream) -> TokenStream {
                             format_ident!("v{i}")
                         });
 
-                        let arg_name2 = arg_name.clone();
+                    let arg_name2 = arg_name.clone();
+
+                    let maybe_args = if v.fields.is_empty() {
+                        quote! {}
+                    } else {
+                        quote! {(#(#arg_name),*)}
+                    };
+
+                    let maybe_args2 = if v.fields.is_empty() {
+                        quote! {}
+                    } else {
+                        quote! {(#(#arg_name2.clone_without_node()),*)}
+                    };
 
                     quote! {
-                        Self::#v_name(#(#arg_name),*) => Self::#v_name(#(#arg_name2.clone_without_node()),*)
+                        Self::#v_name #maybe_args => Self::#v_name #maybe_args2
                     }
                 });
 
@@ -624,6 +648,53 @@ pub fn derive_clone_with_node(input: TokenStream) -> TokenStream {
 
                     fn clone_without_node(&self) -> Self {
                         match self {
+                            #(#variant2),*
+                        }
+                    }
+                }
+            };
+
+            expanded.into()
+        }
+        Data::Struct(struct_data) => {
+            let variant1;
+            let variant2;
+
+            match &struct_data.fields {
+                Fields::Named(fields) => {
+                    variant1 = fields.named.iter()
+                        .map(|f| {
+                            let f_name1 = f.ident.clone().unwrap();
+                            let f_name2 = f_name1.clone();
+
+                            quote! {
+                                #f_name1: self.#f_name2.clone_with_node()
+                            }
+                        });
+
+                    variant2 = fields.named.iter()
+                        .map(|f| {
+                            let f_name1 = f.ident.clone().unwrap();
+                            let f_name2 = f_name1.clone();
+
+                            quote! {
+                                #f_name1: self.#f_name2.clone_without_node()
+                            }
+                        });
+                },
+                _ => unimplemented!("Only named fields supported.")
+            }
+
+            let expanded = quote! {
+                impl #generics CloneWithNode for #name #generics #where_clause {
+                    fn clone_with_node(&mut self) -> Self {
+                        Self {
+                            #(#variant1),*
+                        }
+                    }
+
+                    fn clone_without_node(&self) -> Self {
+                        Self {
                             #(#variant2),*
                         }
                     }
