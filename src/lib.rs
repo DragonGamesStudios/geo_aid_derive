@@ -313,36 +313,44 @@ pub fn derive_definition(input: TokenStream) -> TokenStream {
     match &input.data {
         Data::Enum(v) => definition_handle_enum(name, generics, &input.attrs, v),
         Data::Struct(struct_data) => {
-            let order_field_code = struct_data.fields.iter().map(|field| {
-                if DefinitionParam::from(&field.attrs).is_entity() {
-                    let field_name = field.ident.as_ref().unwrap();
-                    quote! {
-                        self.#field_name.order(context)
+            let order_field_code = if struct_data.fields.is_empty() {
+                quote! {0}
+            } else {
+                struct_data.fields.iter().flat_map(|field| {
+                    if DefinitionParam::from(&field.attrs).is_entity() {
+                        let field_name = field.ident.as_ref().unwrap();
+                        Some(quote! {
+                            self.#field_name.order(context)
+                        })
+                    } else {
+                        None
                     }
-                } else {
-                    quote! {}
-                }
-            });
+                }).next().unwrap()
+            };
 
-            let contains_field_code = struct_data.fields.iter().map(|field| {
-                if DefinitionParam::from(&field.attrs).is_entity() {
-                    let field_name = field.ident.as_ref().unwrap();
-                    quote! {
-                        self.#field_name.contains_entity(entity, context)
+            let contains_field_code = if struct_data.fields.is_empty() {
+                quote! {false}
+            } else {
+                struct_data.fields.iter().flat_map(|field| {
+                    if DefinitionParam::from(&field.attrs).is_entity() {
+                        let field_name = field.ident.as_ref().unwrap();
+                        Some(quote! {
+                            self.#field_name.contains_entity(entity, context)
+                        })
+                    } else {
+                        None
                     }
-                } else {
-                    quote! {}
-                }
-            });
+                }).next().unwrap()
+            };
 
             let expanded = quote! {
                 impl Definition for #name {
                     fn order(&self, context: &CompileContext) -> usize {
-                        #(#order_field_code)*
+                        #order_field_code
                     }
 
                     fn contains_entity(&self, entity: usize, context: &CompileContext) -> bool {
-                        #(#contains_field_code)*
+                        #contains_field_code
                     }
                 }
             };
@@ -509,12 +517,12 @@ pub fn overload(input: TokenStream) -> TokenStream {
 
             let converted_it = params.iter().map(|_| {
                 quote! {
-                    crate::script::unroll::Convert::convert(args.next().unwrap()).unwrap(),
+                    crate::script::unroll::Convert::convert(args.next().unwrap(), context),
                 }
             });
 
             let converted_group = param_group.as_ref().map(|_| quote! {
-                args.map(|x| crate::script::unroll::Convert::convert(x).unwrap()).collect::<Vec<_>>(),
+                args.map(|x| crate::script::unroll::Convert::convert(x, context)).collect::<Vec<_>>(),
             }).into_iter();
 
             let param_group_it = param_group
@@ -540,16 +548,17 @@ pub fn overload(input: TokenStream) -> TokenStream {
                 }
             };
 
+            // panic!("{}", expanded);
             expanded.into()
         }
         OverloadInput::Rule(OverloadRule { lhs, rhs, func }) => {
             let expanded = quote! {
                 crate::script::unroll::RuleOverload {
                     definition: crate::script::unroll::RuleDefinition(Box::new(
-                        |lhs, rhs, context, properties, invert| {
+                        |lhs, rhs, context: &mut crate::script::unroll::CompileContext, properties, invert| {
                             (#func)(
-                                crate::script::unroll::Convert::convert(lhs).unwrap(),
-                                crate::script::unroll::Convert::convert(rhs).unwrap(),
+                                crate::script::unroll::Convert::convert(lhs, context),
+                                crate::script::unroll::Convert::convert(rhs, context),
                                 context,
                                 properties,
                                 invert
