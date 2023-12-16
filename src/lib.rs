@@ -316,31 +316,41 @@ pub fn derive_definition(input: TokenStream) -> TokenStream {
             let order_field_code = if struct_data.fields.is_empty() {
                 quote! {0}
             } else {
-                struct_data.fields.iter().flat_map(|field| {
-                    if DefinitionParam::from(&field.attrs).is_entity() {
-                        let field_name = field.ident.as_ref().unwrap();
-                        Some(quote! {
-                            self.#field_name.order(context)
-                        })
-                    } else {
-                        None
-                    }
-                }).next().unwrap()
+                struct_data
+                    .fields
+                    .iter()
+                    .flat_map(|field| {
+                        if DefinitionParam::from(&field.attrs).is_entity() {
+                            let field_name = field.ident.as_ref().unwrap();
+                            Some(quote! {
+                                self.#field_name.order(context)
+                            })
+                        } else {
+                            None
+                        }
+                    })
+                    .next()
+                    .unwrap()
             };
 
             let contains_field_code = if struct_data.fields.is_empty() {
                 quote! {false}
             } else {
-                struct_data.fields.iter().flat_map(|field| {
-                    if DefinitionParam::from(&field.attrs).is_entity() {
-                        let field_name = field.ident.as_ref().unwrap();
-                        Some(quote! {
-                            self.#field_name.contains_entity(entity, context)
-                        })
-                    } else {
-                        None
-                    }
-                }).next().unwrap()
+                struct_data
+                    .fields
+                    .iter()
+                    .flat_map(|field| {
+                        if DefinitionParam::from(&field.attrs).is_entity() {
+                            let field_name = field.ident.as_ref().unwrap();
+                            Some(quote! {
+                                self.#field_name.contains_entity(entity, context)
+                            })
+                        } else {
+                            None
+                        }
+                    })
+                    .next()
+                    .unwrap()
             };
 
             let expanded = quote! {
@@ -587,65 +597,59 @@ pub fn derive_clone_with_node(input: TokenStream) -> TokenStream {
 
     match &input.data {
         Data::Enum(enum_data) => {
-            let variant1 = enum_data.variants
-                .iter()
-                .map(|v| {
-                    let v_name = &v.ident;
-                    let arg_name = v.fields
-                        .iter()
-                        .enumerate()
-                        .map(|(i, _)| {
-                            format_ident!("v{i}")
-                        });
+            let variant1 = enum_data.variants.iter().map(|v| {
+                let v_name = &v.ident;
+                let arg_name = v
+                    .fields
+                    .iter()
+                    .enumerate()
+                    .map(|(i, _)| format_ident!("v{i}"));
 
-                    let arg_name2 = arg_name.clone();
+                let arg_name2 = arg_name.clone();
 
-                    let maybe_args = if v.fields.is_empty() {
-                        quote! {}
-                    } else {
-                        quote! {(#(#arg_name),*)}
-                    };
+                let maybe_args = if v.fields.is_empty() {
+                    quote! {}
+                } else {
+                    quote! {(#(#arg_name),*)}
+                };
 
-                    let maybe_args2 = if v.fields.is_empty() {
-                        quote! {}
-                    } else {
-                        quote! {(#(#arg_name2.clone_with_node()),*)}
-                    };
+                let maybe_args2 = if v.fields.is_empty() {
+                    quote! {}
+                } else {
+                    quote! {(#(#arg_name2.clone_with_node()),*)}
+                };
 
-                    quote! {
-                        Self::#v_name #maybe_args => Self::#v_name #maybe_args2
-                    }
-                });
-                
-            let variant2 = enum_data.variants
-                .iter()
-                .map(|v| {
-                    let v_name = &v.ident;
-                    let arg_name = v.fields
-                        .iter()
-                        .enumerate()
-                        .map(|(i, _)| {
-                            format_ident!("v{i}")
-                        });
+                quote! {
+                    Self::#v_name #maybe_args => Self::#v_name #maybe_args2
+                }
+            });
 
-                    let arg_name2 = arg_name.clone();
+            let variant2 = enum_data.variants.iter().map(|v| {
+                let v_name = &v.ident;
+                let arg_name = v
+                    .fields
+                    .iter()
+                    .enumerate()
+                    .map(|(i, _)| format_ident!("v{i}"));
 
-                    let maybe_args = if v.fields.is_empty() {
-                        quote! {}
-                    } else {
-                        quote! {(#(#arg_name),*)}
-                    };
+                let arg_name2 = arg_name.clone();
 
-                    let maybe_args2 = if v.fields.is_empty() {
-                        quote! {}
-                    } else {
-                        quote! {(#(#arg_name2.clone_without_node()),*)}
-                    };
+                let maybe_args = if v.fields.is_empty() {
+                    quote! {}
+                } else {
+                    quote! {(#(#arg_name),*)}
+                };
 
-                    quote! {
-                        Self::#v_name #maybe_args => Self::#v_name #maybe_args2
-                    }
-                });
+                let maybe_args2 = if v.fields.is_empty() {
+                    quote! {}
+                } else {
+                    quote! {(#(#arg_name2.clone_without_node()),*)}
+                };
+
+                quote! {
+                    Self::#v_name #maybe_args => Self::#v_name #maybe_args2
+                }
+            });
 
             let expanded = quote! {
                 impl #generics CloneWithNode for #name #generics #where_clause {
@@ -671,27 +675,25 @@ pub fn derive_clone_with_node(input: TokenStream) -> TokenStream {
 
             match &struct_data.fields {
                 Fields::Named(fields) => {
-                    variant1 = fields.named.iter()
-                        .map(|f| {
-                            let f_name1 = f.ident.clone().unwrap();
-                            let f_name2 = f_name1.clone();
+                    variant1 = fields.named.iter().map(|f| {
+                        let f_name1 = f.ident.clone().unwrap();
+                        let f_name2 = f_name1.clone();
 
-                            quote! {
-                                #f_name1: self.#f_name2.clone_with_node()
-                            }
-                        });
+                        quote! {
+                            #f_name1: self.#f_name2.clone_with_node()
+                        }
+                    });
 
-                    variant2 = fields.named.iter()
-                        .map(|f| {
-                            let f_name1 = f.ident.clone().unwrap();
-                            let f_name2 = f_name1.clone();
+                    variant2 = fields.named.iter().map(|f| {
+                        let f_name1 = f.ident.clone().unwrap();
+                        let f_name2 = f_name1.clone();
 
-                            quote! {
-                                #f_name1: self.#f_name2.clone_without_node()
-                            }
-                        });
-                },
-                _ => unimplemented!("Only named fields supported.")
+                        quote! {
+                            #f_name1: self.#f_name2.clone_without_node()
+                        }
+                    });
+                }
+                _ => unimplemented!("Only named fields supported."),
             }
 
             let expanded = quote! {
