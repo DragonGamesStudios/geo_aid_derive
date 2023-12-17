@@ -54,18 +54,16 @@ pub fn derive_kind(input: TokenStream) -> TokenStream {
             let is_trivial = input
                 .attrs
                 .iter()
-                .find(|x| x.path().is_ident("trivial"))
-                .is_some();
+                .any(|x| x.path().is_ident("trivial"));
 
             let (field1, field2) = match &struct_data.fields {
                 Fields::Named(v) => (
                     v.named
                         .iter()
                         .filter(|f| {
-                            f.attrs
+                            !f.attrs
                                 .iter()
-                                .find(|x| x.path().is_ident("skip_collecting"))
-                                .is_none()
+                                .any(|x| x.path().is_ident("skip_collecting"))
                         })
                         .map(|f| &f.ident),
                     v.named.iter().map(|field| {
@@ -237,7 +235,6 @@ fn definition_handle_enum(
         let name = &variant.ident;
 
         let field_ident = (0..variant.fields.len())
-            .into_iter()
             .map(|i| format_ident!("v{i}"));
 
         let field_checker = variant.fields.iter().enumerate().map(|(i, field)| {
@@ -566,13 +563,13 @@ pub fn overload(input: TokenStream) -> TokenStream {
                 crate::script::unroll::RuleOverload {
                     definition: crate::script::unroll::RuleDefinition(Box::new(
                         |lhs, rhs, context: &mut crate::script::unroll::CompileContext, properties, invert| {
-                            (#func)(
+                            std::boxed::Box::new((#func)(
                                 crate::script::unroll::Convert::convert(lhs, context),
                                 crate::script::unroll::Convert::convert(rhs, context),
                                 context,
                                 properties,
                                 invert
-                            )
+                            ))
                         }
                     )),
                     params: (
