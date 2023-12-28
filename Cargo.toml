@@ -1,7 +1,7 @@
 [package]
 name = "geo_aid_derive"
 description = "Derive crate for geo-aid"
-version = "0.1.2"
+version = "0.1.3"
 authors = ["DragonGamesStudios <margos.michal@gmail.com>"]
 keywords = ["template", "proc_macro", "procmacro", "geo-aid"]
 edition = "2018"
