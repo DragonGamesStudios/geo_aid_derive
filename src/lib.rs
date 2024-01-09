@@ -562,13 +562,14 @@ pub fn overload(input: TokenStream) -> TokenStream {
             let expanded = quote! {
                 crate::script::unroll::RuleOverload {
                     definition: crate::script::unroll::RuleDefinition(Box::new(
-                        |lhs, rhs, context: &mut crate::script::unroll::CompileContext, properties, invert| {
+                        |lhs, rhs, context: &mut crate::script::unroll::CompileContext, properties, invert, weight| {
                             std::boxed::Box::new((#func)(
                                 crate::script::unroll::Convert::convert(lhs, context),
                                 crate::script::unroll::Convert::convert(rhs, context),
                                 context,
                                 properties,
-                                invert
+                                invert,
+                                weight
                             ))
                         }
                     )),
