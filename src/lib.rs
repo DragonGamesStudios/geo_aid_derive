@@ -4,10 +4,12 @@ use proc_macro::TokenStream;
 
 use quote::{format_ident, quote, ToTokens};
 use syn::parse::{Parse, ParseStream};
+use syn::punctuated::Punctuated;
+use syn::token::Paren;
 use syn::{
     braced, parenthesized, parse_macro_input, Attribute, Data, DataEnum, DeriveInput, Expr, Fields,
     GenericArgument, GenericParam, Generics, Ident, Lit, Path, PathArguments, PathSegment, Token,
-    Type, TypePath,
+    Type, TypePath, Block,
 };
 
 /// Assumes there's no where clause.
@@ -47,121 +49,25 @@ fn create_type_from_def(ident: &Ident, generics: &Generics) -> Type {
     }
 }
 
-#[proc_macro_derive(Evaluate, attributes(evaluate))]
-pub fn derive_evaluate(input: TokenStream) -> TokenStream {
+#[proc_macro_derive(Execute)]
+pub fn derive_execute(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
 
-    let output: Path = input
-        .attrs
-        .iter()
-        .find(|x| x.path().is_ident("evaluate"))
-        .unwrap()
-        .parse_args()
-        .unwrap();
     let enum_name = input.ident;
-
     let enum_data = match &input.data {
         Data::Enum(v) => v,
-        _ => panic!("invalid evaluate input"),
+        _ => panic!("invalid Execute input"),
     };
     let variant1 = enum_data.variants.iter().map(|v| &v.ident);
 
     let expanded = quote! {
-        impl Evaluate for #enum_name {
-            type Output = #output;
-
-            fn evaluate(&self, args: &EvaluationArgs) -> Self::Output {
+        impl Execute for #enum_name {
+            unsafe fn execute(&self, args: &mut [Value]) {
                 match self {
-                    #(Self::#variant1(v) => v.evaluate(args),)*
+                    #(Self::#variant1(v) => v.execute(args),)*
                 }
             }
         }
-    };
-
-    expanded.into()
-}
-
-#[proc_macro_derive(Kind, attributes(trivial, weigh_with, skip_collecting))]
-pub fn derive_kind(input: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(input as DeriveInput);
-    let name = input.ident;
-    let generics = input.generics;
-    let where_clause = generics.where_clause.clone();
-
-    let expanded = match &input.data {
-        Data::Struct(struct_data) => {
-            let is_trivial = input.attrs.iter().any(|x| x.path().is_ident("trivial"));
-
-            let (field1, field2) = match &struct_data.fields {
-                Fields::Named(v) => (
-                    v.named
-                        .iter()
-                        .filter(|f| !f.attrs.iter().any(|x| x.path().is_ident("skip_collecting")))
-                        .map(|f| &f.ident),
-                    v.named.iter().map(|field| {
-                        let ident = &field.ident;
-
-                        if let Some(weigh_with) =
-                            field.attrs.iter().find(|x| x.path().is_ident("weigh_with"))
-                        {
-                            let expr: Expr = weigh_with.parse_args().unwrap();
-
-                            quote! { (#expr)(&self.#ident) }
-                        } else {
-                            quote! { self.#ident.weights }
-                        }
-                    }),
-                ),
-                Fields::Unnamed(_) => panic!("not supported"),
-                Fields::Unit => panic!("not supported"),
-            };
-
-            quote! {
-                impl #generics Kind for #name #generics #where_clause {
-                    fn collect(&self, exprs: &mut Vec<usize>) {
-                        #(self.#field1.collect(exprs);)*
-                    }
-
-                    fn is_trivial(&self) -> bool {
-                        #is_trivial
-                    }
-
-                    fn evaluate_weights(&self) -> Weights {
-                        let mut weights = Weights::empty();
-                        #(weights += &#field2;)*
-                        weights
-                    }
-                }
-            }
-        }
-        Data::Enum(enum_data) => {
-            let variant1 = enum_data.variants.iter().map(|v| &v.ident);
-            let variant2 = variant1.clone();
-            let variant3 = variant1.clone();
-
-            quote! {
-                impl Kind for #name {
-                    fn collect(&self, exprs: &mut Vec<usize>) {
-                        match self {
-                            #(Self::#variant1(v) => v.collect(exprs),)*
-                        }
-                    }
-
-                    fn is_trivial(&self) -> bool {
-                        match self {
-                            #(Self::#variant2(v) => v.is_trivial(),)*
-                        }
-                    }
-
-                    fn evaluate_weights(&self) -> Weights {
-                        match self {
-                            #(Self::#variant3(v) => v.evaluate_weights(),)*
-                        }
-                    }
-                }
-            }
-        }
-        Data::Union(_) => panic!("union not supported"),
     };
 
     expanded.into()
@@ -939,5 +845,151 @@ pub fn derive_parse(input: TokenStream) -> TokenStream {
         },
     };
 
+    expanded.into()
+}
+
+#[derive(Debug)]
+enum InstrArgType {
+    Line,
+    Circle,
+    Complex,
+    Real
+}
+
+impl InstrArgType {
+    fn construct_value(&self, block: &Block) -> proc_macro2::TokenStream {
+        match self {
+            Self::Line => quote! { Value { line: #block } },
+            Self::Circle => quote! { Value { circle: #block } },
+            Self::Complex => quote! { Value { complex: #block } },
+            Self::Real => quote! { Value { complex: Complex::real(#block) } },
+        }
+    }
+}
+
+impl Parse for InstrArgType {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let ident = input.parse::<Ident>()?;
+
+        Ok(match ident.to_string().as_str() {
+            "Line" => Self::Line,
+            "Circle" => Self::Circle,
+            "Complex" => Self::Complex,
+            "Real" => Self::Real,
+            _ => return Err(syn::Error::new_spanned(ident, "invalid type"))
+        })
+    }
+}
+
+impl ToTokens for InstrArgType {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        tokens.extend(match self {
+            Self::Line => quote! { line },
+            Self::Circle => quote! { circle },
+            Self::Complex => quote! { complex },
+            Self::Real => quote! { complex.real },
+        });
+    }
+}
+
+#[derive(Debug)]
+struct InstructionArg {
+    name: Ident,
+    _colon: Token![:],
+    ty: InstrArgType
+}
+
+impl Parse for InstructionArg {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        Ok(Self {
+            name: input.parse()?,
+            _colon: input.parse()?,
+            ty: input.parse()?
+        })
+    }
+}
+
+#[derive(Debug)]
+struct Instruction {
+    name: Ident,
+    _paren: Paren,
+    args: Punctuated<InstructionArg, Token![,]>,
+    _arrow: Token![->],
+    returned: InstrArgType,
+    code: Block
+}
+
+impl Parse for Instruction {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let params;
+        let parsed = Self {
+            name: input.parse()?,
+            _paren: parenthesized!(params in input),
+            args: params.parse_terminated(InstructionArg::parse, Token![,])?,
+            _arrow: input.parse()?,
+            returned: input.parse()?,
+            code: input.parse()?
+        };
+
+        // println!("{parsed:?}");
+
+        Ok(parsed)
+    }
+}
+
+struct InstructionsInput {
+    instructions: Vec<Instruction>
+}
+
+impl Parse for InstructionsInput {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let mut instructions = Vec::new();
+
+        while !input.is_empty() {
+            instructions.push(input.parse()?);
+        }
+
+        Ok(Self {
+            instructions
+        })
+    }
+}
+
+/// Instruction generator macro
+#[proc_macro]
+pub fn instructions(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as InstructionsInput);
+
+    let inst_code = input.instructions.into_iter().map(|inst| {
+        let name = inst.name;
+        let param_name1 = inst.args.iter().map(|x| &x.name);
+        let param_name2 = param_name1.clone();
+        let param_name3 = param_name1.clone();
+        let param_type = inst.args.iter().map(|x| &x.ty);
+        let value = inst.returned.construct_value(&inst.code);
+
+        quote! {
+            #[derive(Debug, Clone, Copy, Serialize)]
+            pub struct #name {
+                #(pub #param_name1: Loc,)*
+                pub target: Loc
+            }
+
+            impl Execute for #name {
+                unsafe fn execute(&self, memory: &mut [Value]) {
+                    let (#(#param_name2),*) = unsafe {(
+                        #(memory.get_unchecked(self.#param_name3).#param_type),*
+                    )};
+
+                    let value = #value;
+                    *memory.get_unchecked_mut(self.target) = value;
+                }
+            }
+        }
+    });
+
+    // panic!("{}", inst_code.next().unwrap());
+
+    let expanded = quote! {#(#inst_code)*};
     expanded.into()
 }
