@@ -6,7 +6,7 @@ authors = ["DragonGamesStudios <margos.michal@gmail.com>"]
 keywords = ["template", "proc_macro", "procmacro", "geo-aid"]
 edition = "2018"
 license = "MIT"
-repository = "https://www.github.com/DragonGamesStudios/geo_aid_derive"
+repository = "https://github.com/DragonGamesStudios/geo_aid_derive"
 
 [lib]
 proc-macro = true
