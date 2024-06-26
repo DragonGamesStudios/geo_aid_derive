@@ -7,7 +7,7 @@ use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::token::Paren;
 use syn::{
-    braced, parenthesized, parse_macro_input, Attribute, Data, DataEnum, DeriveInput, Expr, Fields,
+    braced, parenthesized, parse_macro_input, Attribute, Data, DeriveInput, Expr, Fields,
     GenericArgument, GenericParam, Generics, Ident, Lit, Path, PathArguments, PathSegment, Token,
     Type, TypePath, Block,
 };
