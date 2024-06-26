@@ -4,10 +4,12 @@ use proc_macro::TokenStream;
 
 use quote::{format_ident, quote, ToTokens};
 use syn::parse::{Parse, ParseStream};
+use syn::punctuated::Punctuated;
+use syn::token::Paren;
 use syn::{
-    braced, parenthesized, parse_macro_input, Attribute, Data, DataEnum, DeriveInput, Expr, Fields,
+    braced, parenthesized, parse_macro_input, Attribute, Data, DeriveInput, Expr, Fields,
     GenericArgument, GenericParam, Generics, Ident, Lit, Path, PathArguments, PathSegment, Token,
-    Type, TypePath,
+    Type, TypePath, Block,
 };
 
 /// Assumes there's no where clause.
@@ -47,32 +49,22 @@ fn create_type_from_def(ident: &Ident, generics: &Generics) -> Type {
     }
 }
 
-#[proc_macro_derive(Evaluate, attributes(evaluate))]
-pub fn derive_evaluate(input: TokenStream) -> TokenStream {
+#[proc_macro_derive(Execute)]
+pub fn derive_execute(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
 
-    let output: Path = input
-        .attrs
-        .iter()
-        .find(|x| x.path().is_ident("evaluate"))
-        .unwrap()
-        .parse_args()
-        .unwrap();
     let enum_name = input.ident;
-
     let enum_data = match &input.data {
         Data::Enum(v) => v,
-        _ => panic!("invalid evaluate input"),
+        _ => panic!("invalid Execute input"),
     };
     let variant1 = enum_data.variants.iter().map(|v| &v.ident);
 
     let expanded = quote! {
-        impl Evaluate for #enum_name {
-            type Output = #output;
-
-            fn evaluate(&self, args: &EvaluationArgs) -> Self::Output {
+        impl Execute for #enum_name {
+            unsafe fn execute(&self, args: &mut [Value]) {
                 match self {
-                    #(Self::#variant1(v) => v.evaluate(args),)*
+                    #(Self::#variant1(v) => v.execute(args),)*
                 }
             }
         }
@@ -81,323 +73,237 @@ pub fn derive_evaluate(input: TokenStream) -> TokenStream {
     expanded.into()
 }
 
-#[proc_macro_derive(Kind, attributes(trivial, weigh_with, skip_collecting))]
-pub fn derive_kind(input: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(input as DeriveInput);
-    let name = input.ident;
-    let generics = input.generics;
-    let where_clause = generics.where_clause.clone();
+// enum DefinitionParam {
+//     Entity,
+//     NoEntity,
+//     Variable,
+//     Sequence,
+//     Map,
+//     Expression,
+//     Order(Expr),
+// }
 
-    let expanded = match &input.data {
-        Data::Struct(struct_data) => {
-            let is_trivial = input.attrs.iter().any(|x| x.path().is_ident("trivial"));
+// impl DefinitionParam {
+//     #[must_use]
+//     pub fn is_entity(&self) -> bool {
+//         matches!(self, Self::Entity)
+//     }
+// }
 
-            let (field1, field2) = match &struct_data.fields {
-                Fields::Named(v) => (
-                    v.named
-                        .iter()
-                        .filter(|f| !f.attrs.iter().any(|x| x.path().is_ident("skip_collecting")))
-                        .map(|f| &f.ident),
-                    v.named.iter().map(|field| {
-                        let ident = &field.ident;
+// impl Parse for DefinitionParam {
+//     fn parse(input: ParseStream) -> syn::Result<Self> {
+//         let ident: Ident = input.parse()?;
 
-                        if let Some(weigh_with) =
-                            field.attrs.iter().find(|x| x.path().is_ident("weigh_with"))
-                        {
-                            let expr: Expr = weigh_with.parse_args().unwrap();
+//         Ok(match ident.to_string().as_str() {
+//             "entity" => Self::Entity,
+//             "order" => Self::Order({
+//                 let content;
+//                 let _ = parenthesized!(content in input);
 
-                            quote! { (#expr)(&self.#ident) }
-                        } else {
-                            quote! { self.#ident.weights }
-                        }
-                    }),
-                ),
-                Fields::Unnamed(_) => panic!("not supported"),
-                Fields::Unit => panic!("not supported"),
-            };
+//                 content.parse()?
+//             }),
+//             "no_entity" => Self::NoEntity,
+//             "variable" => Self::Variable,
+//             "sequence" => Self::Sequence,
+//             "map" => Self::Map,
+//             &_ => panic!("invalid def"),
+//         })
+//     }
+// }
 
-            quote! {
-                impl #generics Kind for #name #generics #where_clause {
-                    fn collect(&self, exprs: &mut Vec<usize>) {
-                        #(self.#field1.collect(exprs);)*
-                    }
+// impl From<&Vec<Attribute>> for DefinitionParam {
+//     fn from(value: &Vec<Attribute>) -> Self {
+//         value
+//             .iter()
+//             .find(|a| a.path().is_ident("def"))
+//             .map_or(DefinitionParam::Expression, |x| x.parse_args().unwrap())
+//     }
+// }
 
-                    fn is_trivial(&self) -> bool {
-                        #is_trivial
-                    }
+// fn definition_handle_enum(
+//     name: &Ident,
+//     generics: &Generics,
+//     attrs: &Vec<Attribute>,
+//     enum_data: &DataEnum,
+// ) -> TokenStream {
+//     let where_clause = &generics.where_clause;
 
-                    fn evaluate_weights(&self) -> Weights {
-                        let mut weights = Weights::empty();
-                        #(weights += &#field2;)*
-                        weights
-                    }
-                }
-            }
-        }
-        Data::Enum(enum_data) => {
-            let variant1 = enum_data.variants.iter().map(|v| &v.ident);
-            let variant2 = variant1.clone();
-            let variant3 = variant1.clone();
+//     let variant1_code = enum_data.variants.iter().map(|variant| {
+//         let name = &variant.ident;
 
-            quote! {
-                impl Kind for #name {
-                    fn collect(&self, exprs: &mut Vec<usize>) {
-                        match self {
-                            #(Self::#variant1(v) => v.collect(exprs),)*
-                        }
-                    }
+//         let field_ident = variant.fields.iter().map(|f| {
+//             if DefinitionParam::from(&f.attrs).is_entity() {
+//                 format_ident!("id")
+//             } else {
+//                 format_ident!("_")
+//             }
+//         });
 
-                    fn is_trivial(&self) -> bool {
-                        match self {
-                            #(Self::#variant2(v) => v.is_trivial(),)*
-                        }
-                    }
+//         let field_getter = if let DefinitionParam::Order(order) = DefinitionParam::from(attrs) {
+//             quote! {#order}
+//         } else {
+//             variant
+//                 .fields
+//                 .iter()
+//                 .find(|f| DefinitionParam::from(&f.attrs).is_entity())
+//                 .map_or_else(
+//                     || quote! {0},
+//                     |_| {
+//                         quote! {
+//                             context.get_entity(*id).order(context)
+//                         }
+//                     },
+//                 )
+//         };
 
-                    fn evaluate_weights(&self) -> Weights {
-                        match self {
-                            #(Self::#variant3(v) => v.evaluate_weights(),)*
-                        }
-                    }
-                }
-            }
-        }
-        Data::Union(_) => panic!("union not supported"),
-    };
+//         let fields = if variant.fields.is_empty() {
+//             quote! {}
+//         } else {
+//             quote! {(#(#field_ident),*)}
+//         };
 
-    expanded.into()
-}
+//         quote! {
+//             Self::#name #fields => {
+//                 #field_getter
+//             }
+//         }
+//     });
 
-enum DefinitionParam {
-    Entity,
-    NoEntity,
-    Variable,
-    Sequence,
-    Map,
-    Expression,
-    Order(Expr),
-}
+//     let variant2_code = enum_data.variants.iter().map(|variant| {
+//         let name = &variant.ident;
 
-impl DefinitionParam {
-    #[must_use]
-    pub fn is_entity(&self) -> bool {
-        matches!(self, Self::Entity)
-    }
-}
+//         let field_ident = (0..variant.fields.len()).map(|i| format_ident!("v{i}"));
 
-impl Parse for DefinitionParam {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        let ident: Ident = input.parse()?;
+//         let field_checker = variant.fields.iter().enumerate().map(|(i, field)| {
+//             let field_ident = format_ident!("v{i}");
+//             let field_def = DefinitionParam::from(&field.attrs);
 
-        Ok(match ident.to_string().as_str() {
-            "entity" => Self::Entity,
-            "order" => Self::Order({
-                let content;
-                let _ = parenthesized!(content in input);
+//             match field_def {
+//                 DefinitionParam::Entity => quote! {
+//                     (if *#field_ident == entity {
+//                         true
+//                     } else {
+//                         context.get_entity(*#field_ident).contains_entity(entity, context)
+//                     })
+//                 },
+//                 DefinitionParam::Variable => quote! {
+//                     #field_ident.borrow().definition.contains_entity(entity, context)
+//                 },
+//                 DefinitionParam::Sequence => quote! {
+//                     #field_ident.iter().any(|x| x.contains_entity(entity, context))
+//                 },
+//                 DefinitionParam::Map => quote! {
+//                     #field_ident.values().any(|x| x.contains_entity(entity, context))
+//                 },
+//                 DefinitionParam::NoEntity | DefinitionParam::Order(_) => quote! {
+//                     false
+//                 },
+//                 DefinitionParam::Expression => quote! {
+//                     #field_ident.contains_entity(entity, context)
+//                 },
+//             }
+//         });
 
-                content.parse()?
-            }),
-            "no_entity" => Self::NoEntity,
-            "variable" => Self::Variable,
-            "sequence" => Self::Sequence,
-            "map" => Self::Map,
-            &_ => panic!("invalid def"),
-        })
-    }
-}
+//         let fields = if variant.fields.is_empty() {
+//             quote! {}
+//         } else {
+//             quote! {(#(#field_ident),*)}
+//         };
 
-impl From<&Vec<Attribute>> for DefinitionParam {
-    fn from(value: &Vec<Attribute>) -> Self {
-        value
-            .iter()
-            .find(|a| a.path().is_ident("def"))
-            .map_or(DefinitionParam::Expression, |x| x.parse_args().unwrap())
-    }
-}
+//         quote! {
+//             Self::#name #fields => {
+//                 #(#field_checker ||)* false
+//             }
+//         }
+//     });
 
-fn definition_handle_enum(
-    name: &Ident,
-    generics: &Generics,
-    attrs: &Vec<Attribute>,
-    enum_data: &DataEnum,
-) -> TokenStream {
-    let where_clause = &generics.where_clause;
+//     let expanded = quote! {
+//         impl #generics Definition for #name #generics #where_clause {
+//             fn order(&self, context: &CompileContext) -> usize {
+//                 match self {
+//                     #(#variant1_code)*
+//                 }
+//             }
 
-    let variant1_code = enum_data.variants.iter().map(|variant| {
-        let name = &variant.ident;
+//             fn contains_entity(&self, entity: usize, context: &CompileContext) -> bool {
+//                 match self {
+//                     #(#variant2_code)*
+//                 }
+//             }
+//         }
+//     };
+//     // panic!("{}", expanded.to_string());
 
-        let field_ident = variant.fields.iter().map(|f| {
-            if DefinitionParam::from(&f.attrs).is_entity() {
-                format_ident!("id")
-            } else {
-                format_ident!("_")
-            }
-        });
+//     expanded.into()
+// }
 
-        let field_getter = if let DefinitionParam::Order(order) = DefinitionParam::from(attrs) {
-            quote! {#order}
-        } else {
-            variant
-                .fields
-                .iter()
-                .find(|f| DefinitionParam::from(&f.attrs).is_entity())
-                .map_or_else(
-                    || quote! {0},
-                    |_| {
-                        quote! {
-                            context.get_entity(*id).order(context)
-                        }
-                    },
-                )
-        };
+// #[proc_macro_derive(Definition, attributes(def))]
+// pub fn derive_definition(input: TokenStream) -> TokenStream {
+//     let input = parse_macro_input!(input as DeriveInput);
 
-        let fields = if variant.fields.is_empty() {
-            quote! {}
-        } else {
-            quote! {(#(#field_ident),*)}
-        };
+//     let name = &input.ident;
+//     let generics = &input.generics;
 
-        quote! {
-            Self::#name #fields => {
-                #field_getter
-            }
-        }
-    });
+//     match &input.data {
+//         Data::Enum(v) => definition_handle_enum(name, generics, &input.attrs, v),
+//         Data::Struct(struct_data) => {
+//             let order_field_code = if struct_data.fields.is_empty() {
+//                 quote! {0}
+//             } else {
+//                 struct_data
+//                     .fields
+//                     .iter()
+//                     .flat_map(|field| {
+//                         if DefinitionParam::from(&field.attrs).is_entity() {
+//                             let field_name = field.ident.as_ref().unwrap();
+//                             Some(quote! {
+//                                 self.#field_name.order(context)
+//                             })
+//                         } else {
+//                             None
+//                         }
+//                     })
+//                     .next()
+//                     .unwrap()
+//             };
 
-    let variant2_code = enum_data.variants.iter().map(|variant| {
-        let name = &variant.ident;
+//             let contains_field_code = if struct_data.fields.is_empty() {
+//                 quote! {false}
+//             } else {
+//                 struct_data
+//                     .fields
+//                     .iter()
+//                     .flat_map(|field| {
+//                         if DefinitionParam::from(&field.attrs).is_entity() {
+//                             let field_name = field.ident.as_ref().unwrap();
+//                             Some(quote! {
+//                                 self.#field_name.contains_entity(entity, context)
+//                             })
+//                         } else {
+//                             None
+//                         }
+//                     })
+//                     .next()
+//                     .unwrap()
+//             };
 
-        let field_ident = (0..variant.fields.len()).map(|i| format_ident!("v{i}"));
+//             let expanded = quote! {
+//                 impl Definition for #name {
+//                     fn order(&self, context: &CompileContext) -> usize {
+//                         #order_field_code
+//                     }
 
-        let field_checker = variant.fields.iter().enumerate().map(|(i, field)| {
-            let field_ident = format_ident!("v{i}");
-            let field_def = DefinitionParam::from(&field.attrs);
+//                     fn contains_entity(&self, entity: usize, context: &CompileContext) -> bool {
+//                         #contains_field_code
+//                     }
+//                 }
+//             };
 
-            match field_def {
-                DefinitionParam::Entity => quote! {
-                    (if *#field_ident == entity {
-                        true
-                    } else {
-                        context.get_entity(*#field_ident).contains_entity(entity, context)
-                    })
-                },
-                DefinitionParam::Variable => quote! {
-                    #field_ident.borrow().definition.contains_entity(entity, context)
-                },
-                DefinitionParam::Sequence => quote! {
-                    #field_ident.iter().any(|x| x.contains_entity(entity, context))
-                },
-                DefinitionParam::Map => quote! {
-                    #field_ident.values().any(|x| x.contains_entity(entity, context))
-                },
-                DefinitionParam::NoEntity | DefinitionParam::Order(_) => quote! {
-                    false
-                },
-                DefinitionParam::Expression => quote! {
-                    #field_ident.contains_entity(entity, context)
-                },
-            }
-        });
-
-        let fields = if variant.fields.is_empty() {
-            quote! {}
-        } else {
-            quote! {(#(#field_ident),*)}
-        };
-
-        quote! {
-            Self::#name #fields => {
-                #(#field_checker ||)* false
-            }
-        }
-    });
-
-    let expanded = quote! {
-        impl #generics Definition for #name #generics #where_clause {
-            fn order(&self, context: &CompileContext) -> usize {
-                match self {
-                    #(#variant1_code)*
-                }
-            }
-
-            fn contains_entity(&self, entity: usize, context: &CompileContext) -> bool {
-                match self {
-                    #(#variant2_code)*
-                }
-            }
-        }
-    };
-    // panic!("{}", expanded.to_string());
-
-    expanded.into()
-}
-
-#[proc_macro_derive(Definition, attributes(def))]
-pub fn derive_definition(input: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(input as DeriveInput);
-
-    let name = &input.ident;
-    let generics = &input.generics;
-
-    match &input.data {
-        Data::Enum(v) => definition_handle_enum(name, generics, &input.attrs, v),
-        Data::Struct(struct_data) => {
-            let order_field_code = if struct_data.fields.is_empty() {
-                quote! {0}
-            } else {
-                struct_data
-                    .fields
-                    .iter()
-                    .flat_map(|field| {
-                        if DefinitionParam::from(&field.attrs).is_entity() {
-                            let field_name = field.ident.as_ref().unwrap();
-                            Some(quote! {
-                                self.#field_name.order(context)
-                            })
-                        } else {
-                            None
-                        }
-                    })
-                    .next()
-                    .unwrap()
-            };
-
-            let contains_field_code = if struct_data.fields.is_empty() {
-                quote! {false}
-            } else {
-                struct_data
-                    .fields
-                    .iter()
-                    .flat_map(|field| {
-                        if DefinitionParam::from(&field.attrs).is_entity() {
-                            let field_name = field.ident.as_ref().unwrap();
-                            Some(quote! {
-                                self.#field_name.contains_entity(entity, context)
-                            })
-                        } else {
-                            None
-                        }
-                    })
-                    .next()
-                    .unwrap()
-            };
-
-            let expanded = quote! {
-                impl Definition for #name {
-                    fn order(&self, context: &CompileContext) -> usize {
-                        #order_field_code
-                    }
-
-                    fn contains_entity(&self, entity: usize, context: &CompileContext) -> bool {
-                        #contains_field_code
-                    }
-                }
-            };
-
-            expanded.into()
-        }
-        _ => panic!("unsupported"),
-    }
-}
+//             expanded.into()
+//         }
+//         _ => panic!("unsupported"),
+//     }
+// }
 
 enum GType {
     Simple(Ident),
@@ -939,5 +845,151 @@ pub fn derive_parse(input: TokenStream) -> TokenStream {
         },
     };
 
+    expanded.into()
+}
+
+#[derive(Debug)]
+enum InstrArgType {
+    Line,
+    Circle,
+    Complex,
+    Real
+}
+
+impl InstrArgType {
+    fn construct_value(&self, block: &Block) -> proc_macro2::TokenStream {
+        match self {
+            Self::Line => quote! { Value { line: #block } },
+            Self::Circle => quote! { Value { circle: #block } },
+            Self::Complex => quote! { Value { complex: #block } },
+            Self::Real => quote! { Value { complex: Complex::real(#block) } },
+        }
+    }
+}
+
+impl Parse for InstrArgType {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let ident = input.parse::<Ident>()?;
+
+        Ok(match ident.to_string().as_str() {
+            "Line" => Self::Line,
+            "Circle" => Self::Circle,
+            "Complex" => Self::Complex,
+            "Real" => Self::Real,
+            _ => return Err(syn::Error::new_spanned(ident, "invalid type"))
+        })
+    }
+}
+
+impl ToTokens for InstrArgType {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        tokens.extend(match self {
+            Self::Line => quote! { line },
+            Self::Circle => quote! { circle },
+            Self::Complex => quote! { complex },
+            Self::Real => quote! { complex.real },
+        });
+    }
+}
+
+#[derive(Debug)]
+struct InstructionArg {
+    name: Ident,
+    _colon: Token![:],
+    ty: InstrArgType
+}
+
+impl Parse for InstructionArg {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        Ok(Self {
+            name: input.parse()?,
+            _colon: input.parse()?,
+            ty: input.parse()?
+        })
+    }
+}
+
+#[derive(Debug)]
+struct Instruction {
+    name: Ident,
+    _paren: Paren,
+    args: Punctuated<InstructionArg, Token![,]>,
+    _arrow: Token![->],
+    returned: InstrArgType,
+    code: Block
+}
+
+impl Parse for Instruction {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let params;
+        let parsed = Self {
+            name: input.parse()?,
+            _paren: parenthesized!(params in input),
+            args: params.parse_terminated(InstructionArg::parse, Token![,])?,
+            _arrow: input.parse()?,
+            returned: input.parse()?,
+            code: input.parse()?
+        };
+
+        // println!("{parsed:?}");
+
+        Ok(parsed)
+    }
+}
+
+struct InstructionsInput {
+    instructions: Vec<Instruction>
+}
+
+impl Parse for InstructionsInput {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let mut instructions = Vec::new();
+
+        while !input.is_empty() {
+            instructions.push(input.parse()?);
+        }
+
+        Ok(Self {
+            instructions
+        })
+    }
+}
+
+/// Instruction generator macro
+#[proc_macro]
+pub fn instructions(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as InstructionsInput);
+
+    let inst_code = input.instructions.into_iter().map(|inst| {
+        let name = inst.name;
+        let param_name1 = inst.args.iter().map(|x| &x.name);
+        let param_name2 = param_name1.clone();
+        let param_name3 = param_name1.clone();
+        let param_type = inst.args.iter().map(|x| &x.ty);
+        let value = inst.returned.construct_value(&inst.code);
+
+        quote! {
+            #[derive(Debug, Clone, Copy, Serialize)]
+            pub struct #name {
+                #(pub #param_name1: Loc,)*
+                pub target: Loc
+            }
+
+            impl Execute for #name {
+                unsafe fn execute(&self, memory: &mut [Value]) {
+                    let (#(#param_name2),*) = unsafe {(
+                        #(memory.get_unchecked(self.#param_name3).#param_type),*
+                    )};
+
+                    let value = #value;
+                    *memory.get_unchecked_mut(self.target) = value;
+                }
+            }
+        }
+    });
+
+    // panic!("{}", inst_code.next().unwrap());
+
+    let expanded = quote! {#(#inst_code)*};
     expanded.into()
 }
